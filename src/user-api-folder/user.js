@@ -3,7 +3,6 @@ const app = express.Router();
 exports.app = app;
 const con = require("../db/conn");
 var jwt = require("jsonwebtoken");
-var atob = require('atob');
 const cors = require("cors");
 app.use(cors());
 require("dotenv").config();
@@ -29,7 +28,6 @@ const storage = multer.diskStorage({
   },
 });
 const upload = multer({ storage: storage });
-const fs = require('fs').promises;
 const nodemailer = require("nodemailer");
 const transporter = nodemailer.createTransport({
   name: "mail.earnkrobharat.com",
@@ -1359,6 +1357,74 @@ app.post("/remove-cart", async (req, res) => {
     return null;
   }
 });
+app.post('/get-cart-by-id', async (req, res) => {
+  try {
+    let comarray = [];
+    let array = [];
+    for (let abc = 0; abc < req.body.ids.length; abc++) {
+      const ele = req.body.ids[abc];
+      const result = await queryAsync("SELECT atc.id as cart_id,atc.user_id,atc.color,atc.count,atc.size,atc.product_id,p.name,p.category_id,p.sub_category_id,p.colorDetails,atc.date FROM `add_to_cart` as atc INNER join product as p on atc.product_id = p.id WHERE atc.`user_id`=(SELECT id FROM `user_details` WHERE `email`=?) and atc.id = ?", [req.body.email, ele]);
+      if (result) {
+        const transformedData = result.map(product => {
+          const colorDetails = JSON.parse(product.colorDetails).map(detail => ({
+            ...detail,
+            image_url: JSON.parse(detail.image_url),
+            sizeDetails: JSON.parse(detail.sizeDetails)
+          }));
+          return {
+            ...product,
+            colorDetails
+          };
+        });
+        for (let index = 0; index < transformedData.length; index++) {
+          const element = transformedData[index];
+          for (let index = 0; index < element.colorDetails.length; index++) {
+            const a = element.colorDetails[index];
+            if (element.color == a.color) {
+              for (let index = 0; index < a.sizeDetails.length; index++) {
+                const b = a.sizeDetails[index];
+                if (element.size == b.size) {
+                  array.push({
+                    "cart_id": element.cart_id,
+                    "user_id": element.user_id,
+                    "color": a.color,
+                    "size": element.size,
+                    "count": element.count,
+                    "product_id": element.product_id,
+                    "date": element.date,
+                    "name": element.name,
+                    "category_id": element.category_id,
+                    "sub_category_id": element.sub_category_id,
+                    "colorDetails": [
+                      {
+                        "color": a.color,
+                        "image_url": [a.image_url],
+                        "gender": a.gender,
+                        "promoted": a.promoted,
+                        "top_selling": a.top_selling,
+                        "shipping_note": a.shipping_note,
+                        "extra_info": a.extra_info,
+                        "description": a.description,
+                        "sizeDetails": [b]
+                      }
+                    ]
+                  })
+                }
+              }
+            }
+          }
+        }
+        comarray.push(array[0]);
+        array = [];
+      }
+      if ((req.body.ids.length - 1) == abc) {
+        res.status(200).json({ error: false, status: true, data: comarray });
+      }
+    }
+  } catch (err) {
+    res.status(500).json({ error: true, status: false, message: err.message });
+  }
+});
 
 app.post('/add-wishlist', async (req, res) => {
   try {
@@ -2020,7 +2086,7 @@ app.post("/add-rating", async (req, res) => {
       res.status(400).json({
         error: true,
         status: false,
-        message:'Product Not Found!'
+        message: 'Product Not Found!'
       })
     } else {
       const result = await queryAsync(
@@ -2137,285 +2203,43 @@ function code() {
     });
   });
 }
-function reffer(ba, ab) {
-  con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`) VALUES (?,?)', [ba, ab]);
-}
-function reffer2(ba, ab) {
-  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as ref FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [ab], (err, level1) => {
-    if (err) throw err;
-    if (level1[0].ref == '') {
-      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`) VALUES (?,?)', [ba, ab]);
+function refferLevel(level, ba, ab) {
+  if (level < 1) throw new Error("Level must be at least 1");
+  const columns = Array.from({ length: level }, (_, i) => `level_${i + 1}`);
+  const values = columns.map(() => '?');
+  const sqlInsert = `INSERT INTO user_level (user_reffral, ${columns.join(', ')}) VALUES (?, ${values.join(', ')})`;
+
+  function getRefCode(refferCode, currentLevel, refs, callback) {
+    if (currentLevel > level) {
+      callback(refs);
     } else {
-      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`) VALUES (?,?,?)', [ba, ab, level1[0].ref]);
-    }
-  })
-}
-function reffer3(ba, ab) {
-  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as ref FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [ab], (err, level1) => {
-    if (err) throw err;
-    if (level1[0].ref == '') {
-      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`) VALUES (?,?)', [ba, ab]);
-    } else {
-      con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level1[0].ref], (err, level2) => {
+      con.query("SELECT IFNULL(reffer_by, 0) as ref FROM user_details WHERE reffer_code = ?", [refferCode], (err, result) => {
         if (err) throw err;
-        if (level2[0].reff == '') {
-          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`) VALUES (?,?,?)', [ba, ab, level1[0].ref]);
+        const ref = result[0]?.ref || '';
+        refs.push(ref);
+        if (ref === '') {
+          callback(refs);
         } else {
-          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`) VALUES (?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff]);
+          getRefCode(ref, currentLevel + 1, refs, callback);
         }
-      })
+      });
     }
-  })
+  }
+
+  getRefCode(ab, 1, [], (refs) => {
+    const insertValues = [ba, ab, ...refs.slice(0, level - 1)];
+    con.query(sqlInsert, insertValues);
+  });
 }
-function reffer4(ba, ab) {
-  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as ref FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [ab], (err, level1) => {
-    if (err) throw err;
-    if (level1[0].ref == '') {
-      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`) VALUES (?,?)', [ba, ab]);
-    } else {
-      con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level1[0].ref], (err, level2) => {
-        if (err) throw err;
-        if (level2[0].reff == '') {
-          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`) VALUES (?,?,?)', [ba, ab, level1[0].ref]);
-        } else {
-          con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level2[0].reff], (err, level3) => {
-            if (err) throw err;
-            if (level3[0].reff == '') {
-              con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`) VALUES (?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff]);
-            } else {
-              con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`) VALUES (?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff]);
-            }
-          })
-        }
-      })
-    }
-  })
-}
-function reffer5(ba, ab) {
-  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as ref FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [ab], (err, level1) => {
-    if (err) throw err;
-    if (level1[0].ref == '') {
-      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`) VALUES (?,?)', [ba, ab]);
-    } else {
-      con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level1[0].ref], (err, level2) => {
-        if (err) throw err;
-        if (level2[0].reff == '') {
-          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`) VALUES (?,?,?)', [ba, ab, level1[0].ref]);
-        } else {
-          con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level2[0].reff], (err, level3) => {
-            if (err) throw err;
-            if (level3[0].reff == '') {
-              con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`) VALUES (?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff]);
-            } else {
-              con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level3[0].reff], (err, level4) => {
-                if (err) throw err;
-                if (level4[0].reff == '') {
-                  con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`) VALUES (?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff]);
-                } else {
-                  con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`) VALUES (?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff]);
-                }
-              })
-            }
-          })
-        }
-      })
-    }
-  })
-}
-function reffer6(ba, ab) {
-  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as ref FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [ab], (err, level1) => {
-    if (err) throw err;
-    if (level1[0].ref == '') {
-      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`) VALUES (?,?)', [ba, ab]);
-    } else {
-      con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level1[0].ref], (err, level2) => {
-        if (err) throw err;
-        if (level2[0].reff == '') {
-          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`) VALUES (?,?,?)', [ba, ab, level1[0].ref]);
-        } else {
-          con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level2[0].reff], (err, level3) => {
-            if (err) throw err;
-            if (level3[0].reff == '') {
-              con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`) VALUES (?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff]);
-            } else {
-              con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level3[0].reff], (err, level4) => {
-                if (err) throw err;
-                if (level4[0].reff == '') {
-                  con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`) VALUES (?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff]);
-                } else {
-                  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level4[0].reff], (err, level5) => {
-                    if (err) throw err;
-                    if (level5[0].reff == '') {
-                      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`) VALUES (?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff]);
-                    } else {
-                      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`, `lavel_6`) VALUES (?,?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff, level5[0].reff]);
-                    }
-                  })
-                }
-              })
-            }
-          })
-        }
-      })
-    }
-  })
-}
-function reffer7(ba, ab) {
-  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as ref FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [ab], (err, level1) => {
-    if (err) throw err;
-    if (level1[0].ref == '') {
-      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`) VALUES (?,?)', [ba, ab]);
-    } else {
-      con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level1[0].ref], (err, level2) => {
-        if (err) throw err;
-        if (level2[0].reff == '') {
-          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`) VALUES (?,?,?)', [ba, ab, level1[0].ref]);
-        } else {
-          con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level2[0].reff], (err, level3) => {
-            if (err) throw err;
-            if (level3[0].reff == '') {
-              con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`) VALUES (?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff]);
-            } else {
-              con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level3[0].reff], (err, level4) => {
-                if (err) throw err;
-                if (level4[0].reff == '') {
-                  con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`) VALUES (?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff]);
-                } else {
-                  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level4[0].reff], (err, level5) => {
-                    if (err) throw err;
-                    if (level5[0].reff == '') {
-                      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`) VALUES (?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff]);
-                    } else {
-                      con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level5[0].reff], (err, level6) => {
-                        if (err) throw err;
-                        if (level6[0].reff == '') {
-                          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`, `lavel_6`) VALUES (?,?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff, level5[0].reff]);
-                        } else {
-                          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`, `lavel_6`, `lavel_7`) VALUES (?,?,?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff, level5[0].reff, level6[0].reff]);
-                        }
-                      })
-                    }
-                  })
-                }
-              })
-            }
-          })
-        }
-      })
-    }
-  })
-}
-function reffer8(ba, ab) {
-  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as ref FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [ab], (err, level1) => {
-    if (err) throw err;
-    if (level1[0].ref == '') {
-      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`) VALUES (?,?)', [ba, ab]);
-    } else {
-      con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level1[0].ref], (err, level2) => {
-        if (err) throw err;
-        if (level2[0].reff == '') {
-          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`) VALUES (?,?,?)', [ba, ab, level1[0].ref]);
-        } else {
-          con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level2[0].reff], (err, level3) => {
-            if (err) throw err;
-            if (level3[0].reff == '') {
-              con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`) VALUES (?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff]);
-            } else {
-              con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level3[0].reff], (err, level4) => {
-                if (err) throw err;
-                if (level4[0].reff == '') {
-                  con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`) VALUES (?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff]);
-                } else {
-                  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level4[0].reff], (err, level5) => {
-                    if (err) throw err;
-                    if (level5[0].reff == '') {
-                      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`) VALUES (?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff]);
-                    } else {
-                      con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level5[0].reff], (err, level6) => {
-                        if (err) throw err;
-                        if (level6[0].reff == '') {
-                          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`, `lavel_6`) VALUES (?,?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff, level5[0].reff]);
-                        } else {
-                          con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level6[0].reff], (err, level7) => {
-                            if (err) throw err;
-                            if (level7[0].reff == '') {
-                              con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`, `lavel_6`, `lavel_7`) VALUES (?,?,?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff, level5[0].reff, level6[0].reff]);
-                            } else {
-                              con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`, `lavel_6`, `lavel_7`, `lavel_8`) VALUES (?,?,?,?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff, level5[0].reff, level6[0].reff, level7[0].reff]);
-                            }
-                          })
-                        }
-                      })
-                    }
-                  })
-                }
-              })
-            }
-          })
-        }
-      })
-    }
-  })
-}
-function reffer9(ba, ab) {
-  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as ref FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [ab], (err, level1) => {
-    if (err) throw err;
-    if (level1[0].ref == '') {
-      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`) VALUES (?,?)', [ba, ab]);
-    } else {
-      con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level1[0].ref], (err, level2) => {
-        if (err) throw err;
-        if (level2[0].reff == '') {
-          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`) VALUES (?,?,?)', [ba, ab, level1[0].ref]);
-        } else {
-          con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level2[0].reff], (err, level3) => {
-            if (err) throw err;
-            if (level3[0].reff == '') {
-              con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`) VALUES (?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff]);
-            } else {
-              con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level3[0].reff], (err, level4) => {
-                if (err) throw err;
-                if (level4[0].reff == '') {
-                  con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`) VALUES (?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff]);
-                } else {
-                  con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level4[0].reff], (err, level5) => {
-                    if (err) throw err;
-                    if (level5[0].reff == '') {
-                      con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`) VALUES (?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff]);
-                    } else {
-                      con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level5[0].reff], (err, level6) => {
-                        if (err) throw err;
-                        if (level6[0].reff == '') {
-                          con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`, `lavel_6`) VALUES (?,?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff, level5[0].reff]);
-                        } else {
-                          con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level6[0].reff], (err, level7) => {
-                            if (err) throw err;
-                            if (level7[0].reff == '') {
-                              con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`, `lavel_6`, `lavel_7`) VALUES (?,?,?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff, level5[0].reff, level6[0].reff]);
-                            } else {
-                              con.query("SELECT IFNULL(ud.`reffer_by`, 0) as reff FROM `user_details` as ud WHERE ud.`reffer_code` = ?", [level7[0].reff], (err, level8) => {
-                                if (err) throw err;
-                                if (level8[0].reff == '') {
-                                  con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`, `lavel_6`, `lavel_7`, `lavel_8`) VALUES (?,?,?,?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff, level5[0].reff, level6[0].reff, level7[0].reff]);
-                                } else {
-                                  con.query('INSERT INTO `user_level`(`user_reffral`, `level_1`, `level_2`, `level_3`, `level_4`, `level_5`, `lavel_6`, `lavel_7`, `lavel_8`, `lavel_9`) VALUES (?,?,?,?,?,?,?,?,?,?)', [ba, ab, level1[0].ref, level2[0].reff, level3[0].reff, level4[0].reff, level5[0].reff, level6[0].reff, level7[0].reff, level8[0].reff]);
-                                }
-                              })
-                            }
-                          })
-                        }
-                      })
-                    }
-                  })
-                }
-              })
-            }
-          })
-        }
-      })
-    }
-  })
-}
+function reffer1(ba, ab) { refferLevel(1, ba, ab); };
+function reffer2(ba, ab) { refferLevel(2, ba, ab); };
+function reffer3(ba, ab) { refferLevel(3, ba, ab); };
+function reffer4(ba, ab) { refferLevel(4, ba, ab); };
+function reffer5(ba, ab) { refferLevel(5, ba, ab); };
+function reffer6(ba, ab) { refferLevel(6, ba, ab); };
+function reffer7(ba, ab) { refferLevel(7, ba, ab); };
+function reffer8(ba, ab) { refferLevel(8, ba, ab); };
+function reffer9(ba, ab) { refferLevel(9, ba, ab); };
 function reffer_bonus(ba) {
   let a = 0;
   con.query("SELECT IFNULL(ul.`level_1`,0) as level_1,IFNULL(ul.`level_2`,0) as level_2,IFNULL(ul.`level_3`,0) as level_3,IFNULL(ul.`level_4`,0) as level_4,IFNULL(ul.`level_5`,0) as level_5,IFNULL(ul.`level_6`,0) as level_6,IFNULL(ul.`level_7`,0) as level_7,IFNULL(ul.`level_8`,0) as level_8,IFNULL(ul.`level_9`,0) as level_9 FROM `user_level` as ul WHERE ul.user_reffral = (SELECT ud.`reffer_code` FROM `user_details` as ud WHERE ud.`mobile` = ?);", [ba], (err1, result1) => {
@@ -2430,7 +2254,6 @@ function reffer_bonus(ba) {
             con.query(`UPDATE user_level as ul SET ul.status${index + 1} = 'Success' WHERE ul.user_reffral = (SELECT reffer_code FROM user_details as ud WHERE ud.mobile = ?)`, [ba]);
             con.query("UPDATE `wallet` SET `winning_wallet` = `winning_wallet` + (SELECT `price` FROM `level` WHERE `name` = ? UNION ALL SELECT 0 FROM DUAL WHERE NOT EXISTS(SELECT`price` FROM`level` WHERE`name` = ?)) WHERE `user_name` = (SELECT `mobile` FROM `user_details` WHERE `reffer_code` = ?)", [index + 1, index + 1, element]);
           } else {
-
           }
         })
       }
